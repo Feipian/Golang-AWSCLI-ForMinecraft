@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,6 +18,69 @@ import (
 
 func base64Encode(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+// waitForActiveInternetRoute polls the route table until the 0.0.0.0/0 route
+// referencing the given IGW is Active (not blackhole). If a blackhole is
+// observed, it will try to delete and recreate the route. Times out after ~30s.
+func waitForActiveInternetRoute(ctx context.Context, ec2Client *ec2.Client, rtID, igwID string) error {
+	for i := 0; i < 10; i++ { // ~30s max
+		desc, err := ec2Client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{RouteTableIds: []string{rtID}})
+		if err != nil || len(desc.RouteTables) == 0 {
+			return fmt.Errorf("failed to read route table during wait: %v", err)
+		}
+		var route *ec2types.Route
+		for idx := range desc.RouteTables[0].Routes {
+			r := &desc.RouteTables[0].Routes[idx]
+			if aws.ToString(r.DestinationCidrBlock) == "0.0.0.0/0" {
+				route = r
+				break
+			}
+		}
+		if route != nil {
+			// If already active and points at our IGW, we're done
+			if route.State == ec2types.RouteStateActive && aws.ToString(route.GatewayId) == igwID {
+				return nil
+			}
+			// If blackhole, try to recreate the route to force activation
+			if route.State == ec2types.RouteStateBlackhole {
+				_, _ = ec2Client.DeleteRoute(ctx, &ec2.DeleteRouteInput{
+					RouteTableId:         aws.String(rtID),
+					DestinationCidrBlock: aws.String("0.0.0.0/0"),
+				})
+				_, err := ec2Client.CreateRoute(ctx, &ec2.CreateRouteInput{
+					RouteTableId:         aws.String(rtID),
+					DestinationCidrBlock: aws.String("0.0.0.0/0"),
+					GatewayId:            aws.String(igwID),
+				})
+				if err != nil {
+					return fmt.Errorf("failed to recreate default route: %v", err)
+				}
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return fmt.Errorf("route to IGW did not become Active in time")
+}
+
+// getPublicIPv4 queries an external service to discover the caller's public IPv4.
+// Returns a plain IPv4 string like "203.0.113.10".
+func getPublicIPv4(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://checkip.amazonaws.com", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(string(b))
+	return ip, nil
 }
 
 func main() {
@@ -269,6 +335,10 @@ func main() {
 		}
 		fmt.Println("Added default route to:", rtID)
 	}
+	// Extra safety: wait until route is Active; recreate if blackhole
+	if err := waitForActiveInternetRoute(ctx, ec2Client, rtID, igwID); err != nil {
+		log.Fatalf("default route did not become active: %v", err)
+	}
 
 	// Ensure association with subnet
 	assocDesc, err := ec2Client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
@@ -309,6 +379,15 @@ func main() {
 	var sgID string
 	sgName := "minecraft-sg"
 	sgDesc := "Security group for PaperMC and SSH"
+
+	// Detect caller public IPv4 and build CIDR /32
+	clientIP := ""
+	if ip, err := getPublicIPv4(ctx); err == nil && ip != "" {
+		clientIP = ip + "/32"
+		fmt.Println("Restricting access to:", clientIP)
+	} else {
+		fmt.Println("Warning: could not detect public IP; will fallback to 0.0.0.0/0 rules")
+	}
 	sgDescOut, err := ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
 		Filters: []ec2types.Filter{
 			{Name: aws.String("vpc-id"), Values: []string{vpcID}},
@@ -337,10 +416,10 @@ func main() {
 		fmt.Println("Created Security Group:", sgID)
 	}
 
-	// Authorize needed ingress rules if missing (Anywhere = IPv4 0.0.0.0/0 and IPv6 ::/0)
-	needSSHv4, needSSHv6 := true, true
-	needMCv4, needMCv6 := true, true
-	needHTTPv4, needHTTPv6 := true, true
+	// Authorize needed ingress rules, prefer restricting to caller IP if available
+	needSSHv4 := true
+	needMCv4 := true
+	needHTTPv4 := true
 	// Read current rules
 	sgRead, err := ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{sgID}})
 	if err == nil && len(sgRead.SecurityGroups) > 0 {
@@ -350,71 +429,102 @@ func main() {
 			proto := aws.ToString(p.IpProtocol)
 			if proto == "tcp" && from <= 22 && to >= 22 {
 				for _, r := range p.IpRanges {
-					if aws.ToString(r.CidrIp) == "0.0.0.0/0" {
+					cidr := aws.ToString(r.CidrIp)
+					if clientIP != "" && cidr == clientIP {
 						needSSHv4 = false
 					}
-				}
-				for _, r := range p.Ipv6Ranges {
-					if aws.ToString(r.CidrIpv6) == "::/0" {
-						needSSHv6 = false
+					if clientIP == "" && cidr == "0.0.0.0/0" {
+						needSSHv4 = false
 					}
 				}
 			}
 			if proto == "tcp" && from <= 25565 && to >= 25565 {
 				for _, r := range p.IpRanges {
-					if aws.ToString(r.CidrIp) == "0.0.0.0/0" {
+					cidr := aws.ToString(r.CidrIp)
+					if clientIP != "" && cidr == clientIP {
 						needMCv4 = false
 					}
-				}
-				for _, r := range p.Ipv6Ranges {
-					if aws.ToString(r.CidrIpv6) == "::/0" {
-						needMCv6 = false
+					if clientIP == "" && cidr == "0.0.0.0/0" {
+						needMCv4 = false
 					}
 				}
 			}
 			if proto == "tcp" && from <= 80 && to >= 80 {
 				for _, r := range p.IpRanges {
-					if aws.ToString(r.CidrIp) == "0.0.0.0/0" {
+					cidr := aws.ToString(r.CidrIp)
+					if clientIP != "" && cidr == clientIP {
 						needHTTPv4 = false
 					}
-				}
-				for _, r := range p.Ipv6Ranges {
-					if aws.ToString(r.CidrIpv6) == "::/0" {
-						needHTTPv6 = false
+					if clientIP == "" && cidr == "0.0.0.0/0" {
+						needHTTPv4 = false
 					}
 				}
 			}
 		}
 	}
+
+	// If we detected caller IP, revoke any wide-open rules for 22/80/25565 (IPv4 and IPv6)
+	if clientIP != "" && err == nil && len(sgRead.SecurityGroups) > 0 {
+		revokePerms := []ec2types.IpPermission{}
+		for _, p := range sgRead.SecurityGroups[0].IpPermissions {
+			from := aws.ToInt32(p.FromPort)
+			to := aws.ToInt32(p.ToPort)
+			proto := aws.ToString(p.IpProtocol)
+			if proto == "tcp" && ((from <= 22 && to >= 22) || (from <= 80 && to >= 80) || (from <= 25565 && to >= 25565)) {
+				perm := ec2types.IpPermission{IpProtocol: aws.String("tcp"), FromPort: p.FromPort, ToPort: p.ToPort}
+				for _, r := range p.IpRanges {
+					if aws.ToString(r.CidrIp) == "0.0.0.0/0" {
+						perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String("0.0.0.0/0")})
+					}
+				}
+				for _, r := range p.Ipv6Ranges {
+					if aws.ToString(r.CidrIpv6) == "::/0" {
+						perm.Ipv6Ranges = append(perm.Ipv6Ranges, ec2types.Ipv6Range{CidrIpv6: aws.String("::/0")})
+					}
+				}
+				if len(perm.IpRanges) > 0 || len(perm.Ipv6Ranges) > 0 {
+					revokePerms = append(revokePerms, perm)
+				}
+			}
+		}
+		if len(revokePerms) > 0 {
+			_, rerr := ec2Client.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+				GroupId:       aws.String(sgID),
+				IpPermissions: revokePerms,
+			})
+			if rerr != nil {
+				log.Printf("warning: failed to revoke wide-open ingress: %v", rerr)
+			} else {
+				fmt.Println("Revoked wide-open rules (0.0.0.0/0, ::/0) for 22/80/25565")
+			}
+		}
+	}
 	var ipPerms []ec2types.IpPermission
-	if needSSHv4 || needSSHv6 {
+	if needSSHv4 {
 		perm := ec2types.IpPermission{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(22), ToPort: aws.Int32(22)}
-		if needSSHv4 {
-			perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String("0.0.0.0/0"), Description: aws.String("SSH IPv4")})
+		cidr := "0.0.0.0/0"
+		if clientIP != "" {
+			cidr = clientIP
 		}
-		if needSSHv6 {
-			perm.Ipv6Ranges = append(perm.Ipv6Ranges, ec2types.Ipv6Range{CidrIpv6: aws.String("::/0"), Description: aws.String("SSH IPv6")})
-		}
+		perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String(cidr), Description: aws.String("SSH IPv4")})
 		ipPerms = append(ipPerms, perm)
 	}
-	if needMCv4 || needMCv6 {
+	if needMCv4 {
 		perm := ec2types.IpPermission{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(25565), ToPort: aws.Int32(25565)}
-		if needMCv4 {
-			perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String("0.0.0.0/0"), Description: aws.String("Minecraft IPv4")})
+		cidr := "0.0.0.0/0"
+		if clientIP != "" {
+			cidr = clientIP
 		}
-		if needMCv6 {
-			perm.Ipv6Ranges = append(perm.Ipv6Ranges, ec2types.Ipv6Range{CidrIpv6: aws.String("::/0"), Description: aws.String("Minecraft IPv6")})
-		}
+		perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String(cidr), Description: aws.String("Minecraft IPv4")})
 		ipPerms = append(ipPerms, perm)
 	}
-	if needHTTPv4 || needHTTPv6 {
+	if needHTTPv4 {
 		perm := ec2types.IpPermission{IpProtocol: aws.String("tcp"), FromPort: aws.Int32(80), ToPort: aws.Int32(80)}
-		if needHTTPv4 {
-			perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String("0.0.0.0/0"), Description: aws.String("HTTP IPv4")})
+		cidr := "0.0.0.0/0"
+		if clientIP != "" {
+			cidr = clientIP
 		}
-		if needHTTPv6 {
-			perm.Ipv6Ranges = append(perm.Ipv6Ranges, ec2types.Ipv6Range{CidrIpv6: aws.String("::/0"), Description: aws.String("HTTP IPv6")})
-		}
+		perm.IpRanges = append(perm.IpRanges, ec2types.IpRange{CidrIp: aws.String(cidr), Description: aws.String("HTTP IPv4")})
 		ipPerms = append(ipPerms, perm)
 	}
 	if len(ipPerms) > 0 {
@@ -465,28 +575,25 @@ func main() {
 	}
 
 	if !foundInstance {
-		paperVersion := "1.21.4" // e.g. "1.21.4" to pin, or leave empty for latest
-		userData := fmt.Sprintf(`#!/bin/bash
+		userData := `#!/bin/bash
 set -euxo pipefail
+
+# Step 1: Update system and install Java
 dnf update -y
-dnf install -y java-17-amazon-corretto-headless python3 curl
+dnf install -y java-21-amazon-corretto-headless --allowerasing
+
+# Step 2: Create PaperMC directory
 mkdir -p /opt/papermc
 cd /opt/papermc
-cat > fetch_paper.py << 'PY'
-import json, urllib.request, sys
-base = 'https://api.papermc.io/v2/projects/paper'
-ver = "%s"
-if not ver:
-    ver = json.load(urllib.request.urlopen(base))['versions'][-1]
-builds = json.load(urllib.request.urlopen(f"{base}/versions/{ver}"))['builds']
-build = builds[-1]
-fname = f"paper-{ver}-{build}.jar"
-url = f"{base}/versions/{ver}/builds/{build}/downloads/{fname}"
-open('paper.jar','wb').write(urllib.request.urlopen(url).read())
-print(fname)
-PY
-python3 fetch_paper.py || true
+
+# Step 3: Download your specific PaperMC jar
+echo "Downloading PaperMC 1.21.4-232..."
+curl -L -o paper.jar "https://fill-data.papermc.io/v1/objects/5ee4f542f628a14c644410b08c94ea42e772ef4d29fe92973636b6813d4eaffc/paper-1.21.4-232.jar"
+
+# Step 4: Accept EULA
 echo "eula=true" > eula.txt
+
+# Step 5: Create systemd service
 cat > /etc/systemd/system/papermc.service << 'UNIT'
 [Unit]
 Description=PaperMC Server
@@ -494,23 +601,27 @@ After=network.target
 
 [Service]
 WorkingDirectory=/opt/papermc
-ExecStart=/usr/bin/java -Xms512M -Xmx768M -jar /opt/papermc/paper.jar nogui
+ExecStart=/usr/bin/java -Xms1G -Xmx1536M -jar /opt/papermc/paper.jar nogui
 Restart=always
 User=root
 
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# Step 6: Start the service
 systemctl daemon-reload
 systemctl enable --now papermc
-`, paperVersion)
+
+echo "PaperMC server setup complete!"
+`
 
 		// Set key pair name for SSH access (change to your key pair name)
 		keyName := "minecraft-key" // Use the EXACT name from AWS Console
 
 		runOut, err := ec2Client.RunInstances(ctx, &ec2.RunInstancesInput{
 			ImageId:      aws.String(amiID),
-			InstanceType: ec2types.InstanceTypeT2Micro,
+			InstanceType: ec2types.InstanceTypeT3Small,
 			MinCount:     aws.Int32(1),
 			MaxCount:     aws.Int32(1),
 			NetworkInterfaces: []ec2types.InstanceNetworkInterfaceSpecification{

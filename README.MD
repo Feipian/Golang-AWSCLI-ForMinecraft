@@ -13,6 +13,13 @@ Replace the path and publicIP
 
 # Cleanup.go
 It can clean all resource our create, avoid forget close ec2 to getting charge
+- [ ] maybe need to change remove rank(order) to avoid dependent. so cant delete some resource
+
+# sshConnect.go
+
+```
+  go run sshConnect.go --key "C:\path\to\minecraft-key.pem" --run
+```
 
 - [X] VPC
 - [X] Internet GateWay
