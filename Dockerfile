@@ -4,6 +4,8 @@ FROM openjdk:21-jdk-slim
 # Set working directory
 WORKDIR /minecraft
 
+RUN apt-get update && apt-get install -y procps && rm -rf /var/lib/apt/lists/*
+
 # Install necessary packages
 RUN apt-get update && apt-get install -y \
     wget \

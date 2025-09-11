@@ -10,7 +10,7 @@ services:
       # Server configuration
       - MINECRAFT_VERSION=1.21.4
       - PAPER_BUILD=latest
-      - MEMORY_SIZE=2G
+      - MEMORY_SIZE=4G
       - EULA=true
       
       # Plugin management (comma-separated list)
@@ -32,8 +32,8 @@ services:
       
     volumes:
       # Persistent data using named volumes
-      - minecraft-data:/minecraft/worlds
-      - minecraft-plugins:/minecraft/plugins
+      - minecraft-data:/minecraft/world
+      - ./plugins:/minecraft/plugins
       - minecraft-logs:/minecraft/logs
       
       # Optional: Mount custom server.properties

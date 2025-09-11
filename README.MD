@@ -156,3 +156,4 @@ This Docker setup can be easily integrated with your existing AWS deployment:
 - [X] Plugin management system
 - [ ] Integration with S3 for plugin storage
 - [ ] Web-based admin panel
+- [ ] How to read my costom plugin i made
