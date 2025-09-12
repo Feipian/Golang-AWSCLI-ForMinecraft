@@ -14,13 +14,16 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
     - name: Validate Docker Compose
       run: |
-        docker-compose config
+        docker compose config
     
     - name: Build Docker Image
       run: |
-        docker-compose build --no-cache
+        docker compose build --no-cache
 
   deploy:
     needs: test
@@ -39,8 +42,8 @@ jobs:
         script: |
           cd /path/to/your/minecraft/server
           git pull origin main
-          docker-compose down
-          docker-compose up -d --build
+          docker compose down
+          docker compose up -d --build
           docker system prune -f
 
   release:
