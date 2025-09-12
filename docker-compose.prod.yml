@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  papermc:
+    environment:
+      - MEMORY_SIZE=6G
+      - MINECRAFT_VERSION=1.21.4
+      - EULA=true
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4.0'
+        reservations:
+          memory: 4G
+          cpus: '2.0'
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
