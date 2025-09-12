@@ -1,0 +1,21 @@
+# Ignore unnecessary files when building Docker image
+.git
+.gitignore
+README.md
+*.md
+*.go
+go.mod
+go.sum
+*.exe
+*.log
+data/
+plugins/
+logs/
+server.properties
+eula.txt
+world/
+world_nether/
+world_the_end/
+*.jar
+.DS_Store
+Thumbs.db

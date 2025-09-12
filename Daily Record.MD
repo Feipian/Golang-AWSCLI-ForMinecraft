@@ -1,0 +1,1 @@
+Today change the ami ID, finally the ec2 instance can work

@@ -1,0 +1,84 @@
+services:
+  papermc:
+    build: .
+    container_name: papermc-server
+    restart: unless-stopped
+    ports:
+      - "25565:25565"  # Minecraft server port
+      - "25575:25575"  # RCON port (optional)
+    environment:
+      # Server configuration
+      - MINECRAFT_VERSION=1.21.4
+      - PAPER_BUILD=latest
+      - MEMORY_SIZE=4G
+      - EULA=true
+      
+      # Plugin management (comma-separated list)
+      # Example: - PLUGINS=WorldEdit,EssentialsX,LuckPerms
+      - PLUGINS=
+      
+      # Server properties overrides
+      - SERVER_NAME=My PaperMC Server
+      - MOTD=Welcome to my PaperMC server!
+      - MAX_PLAYERS=20
+      - GAMEMODE=survival
+      - DIFFICULTY=easy
+      - PVP=true
+      - WHITE_LIST=false
+      - ONLINE_MODE=true
+      
+      # RCON settings
+      - RCON_PASSWORD=changeme123
+      
+    volumes:
+      # Persistent data using named volumes
+      - minecraft-data:/minecraft/world
+      - ./plugins:/minecraft/plugins
+      - minecraft-logs:/minecraft/logs
+      
+      # Optional: Mount custom server.properties
+      # - ./custom-server.properties:/minecraft/server.properties:ro
+      
+    networks:
+      - minecraft-network
+      
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:25565"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+  # Optional: Add a web-based admin panel
+  # minecraft-admin:
+  #   image: itzg/minecraft-server:java17
+  #   container_name: minecraft-admin
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     - EULA=TRUE
+  #     - TYPE=PAPER
+  #     - VERSION=1.20.4
+  #   volumes:
+  #     - ./admin-data:/data
+  #   networks:
+  #     - minecraft-network
+
+networks:
+  minecraft-network:
+    driver: bridge
+
+volumes:
+  minecraft-data:
+  minecraft-plugins:
+  minecraft-logs:
+
