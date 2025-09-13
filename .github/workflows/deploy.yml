@@ -28,11 +28,11 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.SERVER_HOST != '' && secrets.SERVER_USER != '' && secrets.SERVER_SSH_KEY != '' }}
     
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Deploy to Server
       uses: appleboy/ssh-action@v1.0.0
       with:

@@ -656,12 +656,54 @@ echo "PaperMC server setup complete!"
 		}
 	}
 
-	// Fetch public IP
+	// Ensure the instance has an Elastic IP associated
+	// 1) Check if an Elastic IP is already associated with this instance
+	addrDesc, err := ec2Client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{
+		Filters: []ec2types.Filter{
+			{Name: aws.String("instance-id"), Values: []string{instanceID}},
+		},
+	})
+	if err != nil {
+		log.Printf("warning: failed to describe addresses: %v", err)
+	}
+
+	var allocationID string
+	var elasticIP string
+	if err == nil && len(addrDesc.Addresses) > 0 {
+		// Already has an EIP
+		allocationID = aws.ToString(addrDesc.Addresses[0].AllocationId)
+		elasticIP = aws.ToString(addrDesc.Addresses[0].PublicIp)
+		fmt.Println("Found existing Elastic IP:", elasticIP)
+	} else {
+		// 2) Allocate a new Elastic IP in the VPC domain
+		allocOut, aerr := ec2Client.AllocateAddress(ctx, &ec2.AllocateAddressInput{Domain: ec2types.DomainTypeVpc})
+		if aerr != nil {
+			log.Fatalf("failed to allocate Elastic IP: %v", aerr)
+		}
+		allocationID = aws.ToString(allocOut.AllocationId)
+		elasticIP = aws.ToString(allocOut.PublicIp)
+		fmt.Println("Allocated Elastic IP:", elasticIP)
+
+		// 3) Associate the Elastic IP to our instance
+		_, asErr := ec2Client.AssociateAddress(ctx, &ec2.AssociateAddressInput{
+			InstanceId:   aws.String(instanceID),
+			AllocationId: aws.String(allocationID),
+		})
+		if asErr != nil {
+			log.Fatalf("failed to associate Elastic IP: %v", asErr)
+		}
+		fmt.Println("Associated Elastic IP to instance:", instanceID)
+	}
+
+	// Fetch public IP (prefer the Elastic IP if present)
 	instOut, err := ec2Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	if err == nil && len(instOut.Reservations) > 0 && len(instOut.Reservations[0].Instances) > 0 {
 		if instOut.Reservations[0].Instances[0].PublicIpAddress != nil {
 			publicIP = aws.ToString(instOut.Reservations[0].Instances[0].PublicIpAddress)
 		}
+	}
+	if elasticIP != "" {
+		publicIP = elasticIP
 	}
 	if publicIP != "" {
 		fmt.Println("PaperMC public address:", publicIP+":25565")
