@@ -1,5 +1,5 @@
 name: Build and Push to Docker Hub
-
+# This workflow is used to build and push the Docker image to Docker Hub
 on:
   push:
     branches: [ main, cicd-pipeline ]
