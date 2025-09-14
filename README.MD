@@ -48,22 +48,35 @@ Then put your plugin JARs into `./plugins/` and restart.
 - Drops privileges to user `minecraft` when available
 
 ## CI/CD (GitHub Actions)
-Two workflows in `.github/workflows/`:
-- `deploy.yml`
-  - CI on PRs/push to `main` (build/validate)
-  - Optional deploy via SSH if secrets are set
-- `dockerhub.yml` (optional)
-  - Build/push to Docker Hub if you configure credentials
-  - Updated with multi-platform builds and caching
+One workflow in `.github/workflows/`:
+- `dockerhub.yml`
+  - Builds and pushes Docker images to Docker Hub
+  - Runs on push to `main` and `cicd-pipeline` branches
+  - Multi-platform builds with caching
   - Test PR workflow
 
-Required repo secrets for deploy:
-- `SERVER_HOST`: server IP or DNS (use an Elastic IP or stable DNS)
-- `SERVER_USER`: SSH user (e.g., ubuntu/ec2-user/deploy)
-- `SERVER_SSH_KEY`: the private SSH key content (OpenSSH format)
+Required repo secrets for Docker Hub:
+- `DOCKER_USERNAME`: Your Docker Hub username
+- `DOCKER_PASSWORD`: Your Docker Hub password or access token
 
-Optional (if you push images):
-- `DOCKER_USERNAME`, `DOCKER_PASSWORD`
+## Local Deployment with Ngrok (Go)
+Run your Minecraft server locally and expose it via ngrok:
+
+```bash
+# Windows
+start-ngrok-minecraft.bat
+
+# Linux/Mac
+./start-ngrok-minecraft.sh
+
+# Or run directly
+go run ngrok-minecraft.go
+```
+
+This will:
+1. Start your Minecraft Docker container on port 25565
+2. Create an ngrok tunnel to expose it to the internet
+3. Give you a public address to share with friends
 
 ## AWS provisioning (Go)
 Provision infrastructure and get a public address:

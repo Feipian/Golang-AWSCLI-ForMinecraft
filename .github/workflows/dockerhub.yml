@@ -1,5 +1,6 @@
 name: Build and Push to Docker Hub
-# This workflow is used to build and push the Docker image to Docker Hub
+# This workflow only builds and pushes Docker images to Docker Hub
+# AWS infrastructure and PaperMC installation is handled by upload2AWS.go
 on:
   push:
     branches: [ main, cicd-pipeline ]
