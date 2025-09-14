@@ -35,7 +35,7 @@ jobs:
 
     - name: Check deployment secrets
       run: |
-        if [ -z "${{ secrets.SERVER_HOST }}" ] || [ -z "${{ secrets.SERVER_USER }}" ] || [ -z "${{ secrets.SERVER_SSH_KEY }}" ]; then
+        if [ -z "${{ secrets.SERVER_HOST }}" ] || [ -z "${{ secrets.SERVER_USER || 'ec2-user' }}" ] || [ -z "${{ secrets.SERVER_SSH_KEY }}" ]; then
           echo "❌ Deployment secrets not configured. Skipping deployment."
           exit 0
         fi
