@@ -43,6 +43,8 @@ jobs:
         fi
         echo "✅ Docker Hub credentials are configured"
         echo "Username: ${{ secrets.DOCKER_USERNAME }}"
+        echo "Repository: ${{ secrets.DOCKER_USERNAME }}/minecraft-server"
+        echo "Make sure this repository exists on Docker Hub!"
     
     - name: Build and Push
       uses: docker/build-push-action@v6
