@@ -54,6 +54,8 @@ Two workflows in `.github/workflows/`:
   - Optional deploy via SSH if secrets are set
 - `dockerhub.yml` (optional)
   - Build/push to Docker Hub if you configure credentials
+  - Updated with multi-platform builds and caching
+  - Test PR workflow
 
 Required repo secrets for deploy:
 - `SERVER_HOST`: server IP or DNS (use an Elastic IP or stable DNS)
