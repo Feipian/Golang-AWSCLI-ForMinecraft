@@ -28,11 +28,26 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
+    - name: Check Docker Hub credentials
+      run: |
+        if [ -z "${{ secrets.DOCKER_USERNAME }}" ]; then
+          echo "❌ DOCKER_USERNAME secret is not set"
+          echo "Please add DOCKER_USERNAME to your repository secrets"
+          exit 1
+        fi
+        if [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
+          echo "❌ DOCKER_PASSWORD secret is not set"
+          echo "Please add DOCKER_PASSWORD to your repository secrets"
+          exit 1
+        fi
+        echo "✅ Docker Hub credentials are configured"
+        echo "Username: ${{ secrets.DOCKER_USERNAME }}"
+    
     - name: Build and Push
       uses: docker/build-push-action@v6
       with:
         context: .
-        push: ${{ github.event_name != 'pull_request' }}
+        push: ${{ github.event_name != 'pull_request' && secrets.DOCKER_USERNAME != '' }}
         tags: |
           ${{ secrets.DOCKER_USERNAME }}/minecraft-server:latest
           ${{ secrets.DOCKER_USERNAME }}/minecraft-server:${{ github.sha }}
