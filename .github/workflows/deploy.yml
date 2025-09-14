@@ -28,10 +28,18 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.SERVER_HOST != '' && secrets.SERVER_USER != '' && secrets.SERVER_SSH_KEY != '' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     
     steps:
     - uses: actions/checkout@v4
+
+    - name: Check deployment secrets
+      run: |
+        if [ -z "${{ secrets.SERVER_HOST }}" ] || [ -z "${{ secrets.SERVER_USER }}" ] || [ -z "${{ secrets.SERVER_SSH_KEY }}" ]; then
+          echo "❌ Deployment secrets not configured. Skipping deployment."
+          exit 0
+        fi
+        echo "✅ Deployment secrets are configured"
 
     - name: Deploy to Server
       uses: appleboy/ssh-action@v1.0.0
@@ -56,5 +64,5 @@ jobs:
     
     - name: Build and Push Docker Image
       run: |
-        docker build -t yourusername/minecraft-server:${{ github.event.release.tag_name }} .
-        docker push yourusername/minecraft-server:${{ github.event.release.tag_name }}
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/minecraft-server:${{ github.event.release.tag_name }} .
+        docker push ${{ secrets.DOCKER_USERNAME }}/minecraft-server:${{ github.event.release.tag_name }}
