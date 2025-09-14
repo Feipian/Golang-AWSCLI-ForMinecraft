@@ -2,9 +2,9 @@ name: Build and Push to Docker Hub
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, cicd-pipeline ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, cicd-pipeline ]
   release:
     types: [ published ]
 
